@@ -1,0 +1,312 @@
+CLASE 2 NGINX EXPERT
+-----------------------------------
+
+#COmando para ver la cantidad de procesadores
+grep ^processor /proc/cpuinfo | wc -l
+
+#Modificar limites a nivel de sistema operativo
+vim /etc/security/limits.conf
+
+* soft nofile 60000
+* hard nofile 60000
+* soft nproc 60000
+* hard nproc 60000
+
+#Editar nginx para el alborraotio
+vim /etc/nginx/nginx.conf
+
+user  nginx;
+worker_processes  auto;
+
+error_log  /var/log/nginx/error.log warn;
+pid        /var/run/nginx.pid;
+
+events {
+    worker_connections  10000;
+    multi_accept on;
+    use epoll;
+}
+
+
+###
+#Mover pagina web de nginx
+cd /etc/nginx/conf.d/
+ mv default.conf default.conf_backup
+
+# Crear dir 
+mkdir /opt/web1
+cd /opt/web1
+
+#Crear iundex
+vim index.html
+WEBSITE 1
+
+#Crear configuiracion NGINX
+cd /etc/nginx/conf.d/
+vim web1.conf
+
+server {
+        listen 80;
+        server_name web1.user-ngxexp.ose;
+
+        location / {
+                root /opt/web1;
+                index index.html;
+        }
+}
+
+##publicar pagina web
+
+nginx -t
+nginx -s reload
+
+#En el otro servidor cliente que no es mi web server, modificar el //etc/hosts
+vim  /etc/hosts
+[IPWEBSERVER] [HOSTNAME]
+
+###Reemplazar los valores por la IP de su cliente y el hostname que le indicaron
+
+##Crear website 2
+vim web2.conf
+server {
+        listen 80;
+        server_name web2.ins-ngxexp.ose;
+
+        location / {
+                root /opt/web2;
+                index index.html;
+        }
+}
+
+##Crear pagina de error 404
+cd /opt/web2
+vim custom404.html
+Pagina no encontrada, intentar con otro contexto.
+
+#Modificar web2.conf para admitir pagina de error
+cd /etc/nginx/conf.d/
+vim web2.conf
+##
+server {
+        listen 80;
+        server_name web2.ins-ngxexp.ose;
+
+        location / {
+                root /opt/web2;
+                index index.html;
+        }
+
+        error_page 404 /custom404.html;
+
+        location = /custom404.html {
+                root /opt/web2;
+                internal;
+        }
+
+}
+##
+#Crear custom para errores 500 502 503 504
+cd /opt/web2
+vim custom50x.html
+##
+Something is wrong!!!
+##
+cd /etc/nginx/conf.d/
+vim web2.conf
+##
+server {
+        listen 80;
+        server_name web2.ins-ngxexp.ose;
+        root /opt/web2;
+
+        location / {
+                index index.html;
+        }
+
+        location /errortest {
+                proxy_pass http://192.168.1.30;
+        }
+        error_page 404 /custom404.html;
+
+        location = /custom404.html {
+                internal;
+        }
+
+        error_page 500 502 503 504 /custom50x.html;
+        location = /custom50x.html {
+                internal;
+        }
+}
+##
+#Modificar /etc/hosts en nuestro servidor nginx
+vim /etc/hosts
+192.168.1.171 web1.ins-ngxexp.ose
+192.168.1.171 web2.ins-ngxexp.ose
+
+
+#Modificar web1.conf 
+cd /etc/nginx/conf.d/web1.conf
+server {
+        listen 80;
+        server_name web1.ins-ngxexp.ose;
+
+        location / {
+                root /opt/web1;
+                index index.html;
+                rewrite ^/(.*)$ http://web2.ins-ngxexp.ose$uri redirect;
+        }
+}
+
+####################
+##REVERSE PROXY
+
+#Mover configuraciones a backup
+cd /etc/nginx/conf.d/
+mkdir backup_webserver
+mv default.conf backup_webserver/
+mv web1.conf backup_webserver/
+mv web2.conf backup_webserver/
+
+#Aplicar cambios
+nginx -t
+nginx -s reload
+
+#Agregar configuracion a back.conf
+cd /etc/nginx/conf.d
+vim back.conf
+##
+server {
+        listen 8888;
+        server_name localhost;
+
+        location / {
+                root /opt/backend;
+                index index.html;
+        }
+}
+##
+
+#Crear aplicación
+
+mkdir /opt/backend
+vim /opt/backend/index.html
+Bienvenido al puerto 8888!!!
+
+##Crear  reverse proxy server
+cd /etc/nginx/conf.d/
+vim proxy.conf
+server {
+        listen 80;
+        server_name proxy.ngxexp.ose;
+
+        location / {
+                proxy_pass http://localhost:8888;
+        }
+}
+
+#Agregar mi ip al etc/hosts
+
+vim /etc/hosts
+192.168.1.170 proxy.ngxexp.ose 
+
+#Para probar
+curl proxy.ngxexp.ose
+
+############
+#LAB REVERSE PROXY
+
+#Backup
+cd /etc/nginx/conf.d
+mkdir backup_reverseproxy
+mv back.conf backup_reverseproxy/
+mv proxy.conf backup_reverseproxy/
+
+#Aplicar cambios
+nginx -t
+nginx -s reload
+
+#Validar los puertos en escucha
+netstat -punta |grep LISTEN
+
+#Descargar imagenes docker 
+yum install git -y
+mkdir /apps
+
+#APP1  - JBOSS
+docker run -d -p 9990:9990 -p 8080:8080 --name jbossngx roko1987/nuevojboss
+
+# APP2 - HTTPD
+docker run -d -p 8090:80 --name apachengx httpd
+
+# APP3 - NGINX ALPINE
+docker run -d -p 8060:80 --name ngxexp nginx:alpine
+
+#Pruebas de consumo de aplicaciones
+curl 192.168.1.170:8080
+curl 192.168.1.170:8090
+curl 192.168.1.170:8060
+
+# Crear archivo de configuración para nginx
+cd /etc/nginx/conf.d
+#Aplicación JBOSS
+vim app1.conf
+server {
+# Aplicacion de JBoss en docker
+        listen 80;
+        server_name app1.ngxexp.ose;
+
+        location / {
+                proxy_pass http://192.168.1.170:8080;
+        }
+}
+
+####Aplicación NGINX ALPINE
+vim app2.conf
+server {
+# Aplicacion NGINX ALPINE
+        listen 80;
+        server_name app2.ngxexp.ose;
+
+        location / {
+                proxy_pass http://192.168.1.170:8060;
+        }
+}
+
+####Aplicación HTTPD
+vim app3.conf
+server {
+# Aplicación 3 para HTTPD
+        listen 80;
+        server_name app3.ngxexp.ose;
+
+        location / {
+                proxy_pass http://192.168.1.170:8090;
+        }
+}
+
+####
+#Ejercicio 2
+
+cd /etc/nginx/conf.d
+vim apps.conf
+server {
+        listen 80;
+        server_name apps.ngxexp.ose;
+
+        location /app1/ {
+#APP JBOSS
+                proxy_pass http://192.168.1.170:8080;
+        }
+
+        location /app2/ {
+#APP NGINX ALPINE
+                proxy_pass http://192.168.1.170:8060;
+        }
+
+        location /app3/ {
+#APP HTTPD
+                proxy_pass http://192.168.1.170:8090;
+        }
+}
+
+

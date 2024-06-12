@@ -1,0 +1,194 @@
+CLASE 4 NGINX EXPERT
+
+CLASE 4 
+########
+
+wildfly /  weblogic /  tomcat
+
+cd /etc/nginx/conf.d
+mkdir backup_dinamico
+mv nodejs.conf backup_dinamico/
+mv python.conf backup_dinamico/
+mv php.conf backup_dinamico/
+
+nginx -t
+nginx -s reload
+
+netstat -punta | grep LISTEN 
+
+vim balancer.conf
+###
+upstream apps_jboss {
+        server 192.168.1.131:8080;
+        server 192.168.1.132:8080;
+}
+##Reemplazar la X por número de usuario 
+server {
+        listen 80;
+        server_name u[X]-lb.ose.pe;
+
+        location / {
+                proxy_pass http://apps_jboss/;
+        }
+}
+###
+
+##Generar certificado
+cd /etc/nginx
+mkdir certs
+cd certs
+openssl req -new -nodes -keyout ose.key -out ose.csr -days 3650
+openssl x509 -req -days 3650 -in ose.csr -signkey ose.key -out ose.crt
+###Para leer el csr
+openssl req -in ose.csr -noout -text
+
+cd /etc/nginx/conf.d
+vim balancer.conf
+###
+server {
+        listen 443 ssl;
+        server_name ins-lb.ose.pe;
+
+        ssl_certificate /etc/nginx/certs/ose.crt;
+        ssl_certificate_key /etc/nginx/certs/ose.key;
+        ssl_protocols TLSv1 TLS1.1 TLSv1.2;
+
+        location / {
+                proxy_pass http://apps_jboss/;
+        }
+}
+###
+##ARCHIVO FINAL BALANCER.CONF
+##
+upstream apps_jboss {
+        server 192.168.1.131:8080;
+        server 192.168.1.132:8080;
+}
+
+server {
+        listen 443 ssl;
+        server_name ins-lb.ose.pe;
+
+        ssl_certificate /etc/nginx/certs/ose.crt;
+        ssl_certificate_key /etc/nginx/certs/ose.key;
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2;
+
+        location / {
+                proxy_pass http://apps_jboss/;
+        }
+}
+
+server {
+        listen 80;
+        server_name ins-lb.ose.pe;
+
+        return 301 https://$server_name$request_uri;
+
+}
+
+
+##Validar acceso al cluster
+ssh root@[primernodo]
+
+kubectl get nodes
+
+##Instalar INgress
+
+yum install git -y
+git clone https://github.com/nginxinc/kubernetes-ingress/
+cd kubernetes-ingress/deployments
+git checkout v1.11.1
+
+
+kubectl apply -f common/ns-and-sa.yaml
+kubectl apply -f rbac/rbac.yaml
+kubectl apply -f rbac/ap-rbac.yaml
+
+kubectl apply -f common/default-server-secret.yaml
+kubectl apply -f common/nginx-config.yaml
+kubectl apply -f  common/ingress-class.yaml
+
+kubectl apply -f common/crds/k8s.nginx.org_virtualservers.yaml
+kubectl apply -f common/crds/k8s.nginx.org_virtualserverroutes.yaml
+kubectl apply -f common/crds/k8s.nginx.org_transportservers.yaml
+kubectl apply -f common/crds/k8s.nginx.org_policies.yaml
+
+##EDITAR LA CANTIDAD DE REPLICAS A 2
+vim deployment/nginx-ingress.yaml
+###
+
+kubectl apply -f deployment/nginx-ingress.yaml
+
+vim deployment/nginx-ingress.yaml
+
+kubectl apply -f service/nodeport.yaml
+
+
+kubectl get nodes -owide
+
+##Crear acotador kubectl
+ln -s /usr/bin/kubectl /usr/bin/k
+
+#####
+#Crear nuevo namespace#
+################
+kubectl create ns test
+
+vim app_test.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: baseweb
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+
+kubectl create -f app_test.yaml -n test
+
+vim svc_test.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: baseweb
+spec:
+  type: ClusterIP
+  ports:
+    - targetPort: 80
+      port: 80
+
+
+kubectl create -f svc_test.yaml -n test
+
+
+
+[root@u10-k8smaster ~]# cat publish.yml
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: ingress-test
+spec:
+  rules:
+  - host: test-ins.ngx.ose
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: baseweb
+          servicePort: 80
+
+ kubectl create -f publish.yml -n test
+

@@ -1,0 +1,171 @@
+
+Zoom Metting
+https://us02web.zoom.us/j/81433028328?pwd=UGVLL1N0bEgxNlA1SHBzdzZCLzlDUT09
+
+======================================================================================
+
+ssh ngxexp@190.235.165.153 -p 16652
+user: ngxexp
+pass: nginx2021
+
+** server/instances
+ssh root@192.168.1.174
+user: root
+pass: redhat
+
+ssh root@192.168.1.175
+user: root
+pass: redhat
+
+======================================================================================
+
+
+NGINX - INSTALLATION
+
+vim /etc/selinux/config
+
+# This file controls the state of SELinux on the system.
+# SELINUX= can take one of these three values:
+# enforcing - SELinux security policy is enforced.
+# permissive - SELinux prints warnings instead of enforcing.
+# disabled - No SELinux policy is loaded.
+SELINUX=disabled
+# SELINUXTYPE= can take one of three two values:
+# targeted - Targeted processes are protected,
+# minimum - Modification of targeted policy. Only selected 
+processes are protected.
+# mls - Multi Level Security protection.
+SELINUXTYPE=targeted
+
+setenforce 0
+
+getenforce
+
+vim /etc/yum.repos.d/nginx.repo
+
+cat <<EOF >  /etc/yum.repos.d/nginx.repo
+[nginx]
+name=nginx-repo
+baseurl=http://nginx.org/packages/mainline/centos/7/$basearch/
+gpgcheck=0
+enabled=1
+EOF
+
+
+yum repolist
+yum provides nginx
+yum -y install nginx
+
+systemctl enable nginx
+systemctl start nginx
+# systemctl restart nginx
+
+#VALIDAR PUERTOS EN ESCUCHA DE MI SERVIDOR
+netstat -punta | grep LISTEN
+
+#Listar reglas de firewall de mi servidor
+firewall-cmd --list-all
+
+#Habilitar regla que permite el puerto 80/http  y 443/https en el firewall
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --reload
+
+
+#Instalar dependencias para compilación
+yum groupinstall 'Development Tools' -y
+yum install zlib-devel pcre-devel openssl-devel perl perl-devel perl-ExtUtils-Embed libxslt libxslt-devel libxml2 libxml2-devel gd gddevel GeoIP GeoIP-devel -y
+
+
+#Descargar versión comprimida de NGINX
+wget http://nginx.org/download/nginx-1.20.1.tar.gz
+
+
+#Descomprimir el archivo nginx
+tar -zxvf nginx-1.20.1.tar.gz
+
+
+#Cambiar de propietario al archivo descomprimido
+chown -R root:root nginx-1.20.1
+
+#establecer configuración para instalar nginx
+cd nginx-1.20.1
+./configure --prefix=/etc/nginx --sbin-path=/usr/sbin/nginx --error-log-path=/var/log/nginx/error.log --pid-path=/var/run/nginx.pid --lock-path=/var/run/nginx.lock --user=nginx --group=nginx
+
+
+#Compilar nginx para instalar
+make
+make install
+
+#Cmabiar de propietario a NGINX
+chown -R nginx:nginx /etc/nginx
+
+#Crear script de servicio
+vim /usr/lib/systemd/system/nginx.service
+
+[Unit]
+Description=nginx- high availability
+Documentation=https://nginx.org/en/docs
+After=network-online.target remote-fs.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/nginx.pid
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/conf/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/conf/nginx.conf
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+
+**** TIPS
+
+cat <<EOF >  /usr/lib/systemd/system/nginx.service
+[Unit]
+Description=nginx- high availability
+Documentation=https://nginx.org/en/docs
+After=network-online.target remote-fs.target nss-lookup.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/nginx.pid
+ExecStartPre=/usr/sbin/nginx -t -c /etc/nginx/conf/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/nginx/conf/nginx.conf
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s TERM $MAINPID
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+
+systemctl enable nginx
+systemctl start nginx
+systemctl status nginx
+# systemctl restart nginx
+
+
+
+==================================================
+
+#Instlar nginx sobre docker
+
+#instalar dependencias
+ yum install -y yum-utils device-mapper-persistent-data lvm2
+
+#Instalar docker
+yum install docker -y
+
+systemctl start docker
+systemctl enable docker
+systemctl status docker
+# systemctl restart docker
+
+# Correr imagen de nginx sobre contenedor
+docker run -d --name ose-nginx -p 8080:80 nginx
+
+#Validar que el puerto 8080 este habilitado
+netstat -punta | grep LISTEN

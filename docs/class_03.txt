@@ -1,0 +1,261 @@
+mv openshift_php/* /opt/web/
+
+CLASE 3 NGINX EXPERT
+-----------------------------------
+
+# Levantar contenedores
+
+docker run -d -p 9990:9990 -p 8080:8080 --name jbossngx01 roko1987/nuevojboss
+docker run -d -p 8090:80 --name apachengx01 httpd
+docker run -d -p 8060:80 --name ngxexp01 nginx:alpine
+
+# Validar si nginx esta activo
+systemctl status nginx
+
+# Iniciar servidor NGINX
+systemctl start nginx
+
+#Editar el archivo /etc/hosts , [X] reemeplazar la x por sus servidor NGINX
+vim /etc/hosts
+##
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+192.168.1.[X] app1.ngxexp.ose
+192.168.1.[X] app2.ngxexp.ose
+192.168.1.[X] app3.ngxexp.ose
+192.168.1.[X] apps.ngxexp.ose
+##
+
+tail -f /var/log/nginx/access.log
+
+##Backup de configuraciones
+cd /etc/nginx/conf.d
+mkdir backup_apps
+mv apps* backup_apps
+
+##PHP Server 
+yum install epel-release -y
+
+rpm -Uvh http://rpms.famillecollet.com/enterprise/remi-release-7.rpm
+
+yum -y --enablerepo=remi-php71 install php-fpm php-cli php-mysqlnd php-soap php-xml php-zip php-json php-mcrypt php-mbstring php-zip php-gd
+
+##Validar las versiones de php
+rpm -qa | grep php
+
+##Activar el servicio de php
+systemctl start php-fpm
+systemctl status php-fpm
+systemctl enable php-fpm
+
+#Instalar git
+yum install git -y
+
+# Descargar website
+git clone https://gitlab.com/josuacastro/openshift_php.git
+
+cd openshift_php/
+mkdir /opt/phpweb
+mv * /opt/phpweb/
+cd /opt/phpweb/
+
+## Configurar servicio de php 
+cd /etc/nginx/conf.d
+vim php.conf
+###Reemplazar la x por el número de usuario
+server {
+        listen 80;
+	server_name php-u[X].ngxexp.ose;
+        root /opt/phpweb;
+        index index.php index.html index.htm;
+
+        error_page 404 /404.html;
+
+        location ~ .php$  {
+                try_files $uri =404;
+                fastcgi_pass 127.0.0.1:9000;
+                fastcgi_index index.php;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                include fastcgi_params;
+        }
+}
+###
+
+#validar la configuracion
+nginx -t
+
+# aplicar cambios
+nginx -s reload
+
+#########################
+# NGINX WITH PYTHON
+
+# Instalar dependencias
+yum install centos-release-scl -y
+yum install rh-python36 -y
+yum install gcc -y
+yum install python-pip -y
+
+#Instalar entorno virtualizado
+pip install virtualenv
+
+#Activar entorno virtualizado 
+scl enable rh-python36 bash
+
+#Validar
+python --version
+
+# Crear workspace
+useradd jorge -d /home/jorge
+mkdir /home/jorge/miproyecto
+cd /home/jorge/miproyecto/
+chown jorge:jorge /home/jorge -R
+
+# Adicionar binarios al entorno virtualizado
+cd /home/jorge/miproyecto
+virtualenv .venv
+source /home/jorge/miproyecto/.venv/bin/activate
+
+#Instalar dependencias en el entorno virtualizado
+pip install uwsgi flask
+pip install --upgrade pip
+
+#Crear aplicación
+vim /home/jorge/miproyecto/app.py
+
+from flask import Flask
+app = Flask(__name__)
+
+@app.route("/")
+def hello():
+        return "<h1>Hola Mundo!!<h1>"
+if __name__ == "__main__":
+        app.run(host='0.0.0.0')
+
+
+
+#### Testear la aplicación
+systemctl stop firewalld
+curl http://[IP_SERVER_1]:5000
+
+##Crear conexión wsgi
+
+vim wsgi.py
+
+from app import app
+
+if __name__ == "__main__":
+        app.run()
+
+##Crear el servicio de aplicación
+
+deactivate
+
+vim /home/jorge/miproyecto/miproyecto.ini
+
+[uwsgi]
+module = wsgi:app
+
+master = true
+processes = 5
+
+socket = miproyecto.sock
+chmod-socket = 660
+vacuum = true
+
+die-on-term = true
+
+
+#Crear daemon de servicio
+vim /etc/systemd/system/miproyecto.service
+
+[Unit]
+Description=uWSGI
+After=network.target
+
+[Service]
+User=jorge
+Group=jorge
+WorkingDirectory=/home/jorge/miproyecto
+Environment="PATH=/home/jorge/miproyecto/.venv/bin"
+ExecStart=/home/jorge/miproyecto/.venv/bin/uwsgi --ini miproyecto.ini
+
+[Install]
+WantedBy=multi-user.target
+
+##VALIDAR LA APLICACION
+
+usermod -aG jorge jorge
+chown -R jorge:jorge /home/jorge
+systemctl start miproyecto.service
+systemctl enable miproyecto.service
+systemctl status miproyecto.service
+
+
+###Crear archivo de configuración NGINX / reemplzara la X por su nombre de usuario
+vim /etc/nginx/conf.d/python.conf 
+server {
+        listen 80;
+        server_name python-[X].ngxexp.ose;
+
+        location / {
+                include uwsgi_params;
+                uwsgi_pass unix://home/jorge/miproyecto/miproyecto.sock;
+        }
+}
+
+## Aplicar cambios
+nginx -t
+nginx -s reload
+
+##Aplicar cambios de ACL
+setfacl -Rm u:nginx:rwx /home/jorge
+
+##############
+#NGINX w/ NODEJS
+
+#Instalar repositorio
+curl -sL https://rpm.nodesource.com/setup_11.x | bash
+yum install nodejs -y
+
+
+mkdir /opt/nodeapp
+cd /opt/nodeapp
+
+###Crear NPM dir
+# Enter a todo y yes al final
+npm init 
+
+# Instalar express
+npm install --save express
+
+#crear app
+vim app.js
+const express = require('express')
+const app = express ()
+
+app.get('/', (req, res) => res.send('Bienvenido a NODEJS'))
+
+app.listen(3000, () => console.log('NodeJS app listening on port 3000'))
+
+##Crear archivo de configuración
+vim /etc/nginx/conf.d/nodejs.conf
+server {
+        listen 80;
+        server_name nodejs.ngxexp.ose;
+
+        location / {
+                proxy_pass http://localhost:3000;
+        }
+}
+
+
+##Generar servico de nodejs en nginx
+
+npm install pm2 -g
+cd /opt/nodeapp
+pm2 start app.js --name app-test
+
+##Para aplicar cambios en el codigo
+pm2 restart app.js
+
